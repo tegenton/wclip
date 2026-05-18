@@ -1,0 +1,27 @@
+wclip - wayland clipboard manager
+=================================
+wclip is a small tool for managing your Wayland selections.
+
+
+Requirements
+------------
+wclip uses the ext-data-control-v1 Wayland extension in addition to the base
+wayland-client library.
+
+
+Installation
+------------
+Edit config.mk to match your preferences (especially where you have the
+wayland-protocols installed). Then installation is as simple as:
+
+$ make
+# make install
+
+
+Usage
+-----
+See the man page.
+
+Configuration
+-------------
+Edit config.h and (re)compile.
