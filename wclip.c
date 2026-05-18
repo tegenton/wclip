@@ -164,29 +164,66 @@ cleanup:
 	return -1;
 }
 
+void on_mime(void *data, struct ext_data_control_offer_v1 *offer, const char *mime_type) {
+	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
+
+	if (!strcmp("text/plain", mime_type)) {
+		offers[0] = offer;
+	}
+}
+
 void
 on_offer(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *id) {
-	fprintf(stderr, "offer\n");
-	ext_data_control_offer_v1_receive(id, "text/plain", dup(STDOUT_FILENO));
+	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
+	struct ext_data_control_offer_v1_listener *listener = NULL;
+
+	if (!(listener = malloc(sizeof(struct ext_data_control_offer_v1_listener))))
+		goto cleanup;
+
+	listener->offer = &on_mime;
+
+	if (ext_data_control_offer_v1_add_listener(id, listener, offers))
+		goto cleanup;
+
+	return;
+
+cleanup:
+	if (listener)
+		free(listener);
 }
 
 void
 on_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *id) {
-	fprintf(stderr, "selection\n");
+	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
+	if (offers[0] == id) {
+		if (offers[1])
+			ext_data_control_offer_v1_destroy(offers[1]);
+		offers[1] = id;
+		offers[0] = NULL;
+	} else {
+		fprintf(stderr, "unexpected item in bagging area\n");
+	}
 }
 
 void
 on_finished(void *data, struct ext_data_control_device_v1 *device) {
-	fprintf(stderr, "finish\n");
 }
 
 void
 on_primary_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *id) {
-	fprintf(stderr, "primary\n");
+	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
+	if (offers[0] == id) {
+		if (offers[2])
+			ext_data_control_offer_v1_destroy(offers[2]);
+		offers[2] = id;
+		offers[0] = NULL;
+	} else {
+		fprintf(stderr, "unexpected item in primary bagging area\n");
+	}
 }
 
 int
-check_offers(wl_t *wl_conn) {
+check_offers(wl_t *wl_conn, struct ext_data_control_offer_v1 **offers) {
 	struct ext_data_control_device_v1_listener *listener = NULL;
 
 	if (!(listener = malloc(sizeof(struct ext_data_control_device_v1_listener)))) {
@@ -198,7 +235,7 @@ check_offers(wl_t *wl_conn) {
 	listener->finished = &on_finished;
 	listener->primary_selection = &on_primary_selection;
 
-	if (ext_data_control_device_v1_add_listener(wl_conn->data_control_device, listener, NULL)) {
+	if (ext_data_control_device_v1_add_listener(wl_conn->data_control_device, listener, offers)) {
 		goto cleanup;
 	}
 
@@ -224,7 +261,7 @@ copy_fd_to_buf(int fd, data_t *buf) {
 int
 copy(wl_t *wl_conn) {
 	data_t *copy_buffer = NULL;
-	/* copying */
+
 	if (!(copy_buffer = malloc(sizeof(data_t)))) {
 		perror("Could not allocate memory");
 		goto cleanup;
@@ -266,15 +303,41 @@ cleanup:
 
 int
 paste(wl_t *wl_conn) {
-	if (check_offers(wl_conn) < 0) {
+	struct ext_data_control_offer_v1 **offers = NULL;
+
+	if (!(offers = malloc(sizeof(struct ext_data_control_offer_v1*) * 3))) {
+		perror("Could not allocate memory");
+		goto cleanup;
+	}
+
+	if (check_offers(wl_conn, offers) < 0) {
 		perror("Could not install Wayland listener");
 		goto cleanup;
 	}
 
-	while (wl_display_dispatch(wl_conn->display) > -1);
+	wl_display_dispatch(wl_conn->display);
+
+	if (!offers[1]) {
+		fprintf(stderr, "Nothing is copied\n");
+		goto cleanup;
+	}
+
+	ext_data_control_offer_v1_receive(offers[1], "text/plain", STDOUT_FILENO);
+	wl_display_roundtrip(wl_conn->display);
+
+	for (int i = 0; i < 3; i++)
+		if (offers[i])
+			ext_data_control_offer_v1_destroy(offers[i]);
+	free(offers);
+	return 0;
 
 cleanup:
-	close_connection(wl_conn);
+	if (offers) {
+		for (int i = 0; i < 3; i++)
+			if (offers[i])
+				ext_data_control_offer_v1_destroy(offers[i]);
+		free(offers);
+	}
 	return -1;
 }
 
@@ -308,14 +371,14 @@ main(int argc, char *argv[]) {
 	}
 
 	if (mode == 0) {
-		if (!copy(wl_conn)) {
+		if (copy(wl_conn))
 			goto cleanup;
-		}
 	} else {
-		if (!paste(wl_conn)) {
+		if (paste(wl_conn))
 			goto cleanup;
-		}
 	}
+
+	close_connection(wl_conn);
 	return EXIT_SUCCESS;
 
 cleanup:
