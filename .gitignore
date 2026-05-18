@@ -3,3 +3,6 @@ config.h
 
 # Object files
 *.o
+
+# Compiled binary
+wclip

@@ -1,24 +1,37 @@
 # wclip - Wayland clipboard
 include config.mk
 
-SRC = wclip.c
-OBJ = ${SRC:.c=.o}
+.POSIX:
+.SUFFIXES:
+
+# TODO: clean this up, how do i get suffix rules to work with paths
+.SUFFIXES: .xml .h .c .o
 
 all: wclip
+
+.xml.h:
+	wayland-scanner client-header < $< > $@
+.xml.c:
+	wayland-scanner private-code < $< > $@
 
 .c.o:
 	${CC} -c ${CFLAGS} $<
 
-${OBJ}: config.h config.mk
+ext-data-control-v1.h: ${PROTOPREFIX}/wayland-protocols/staging/ext-data-control/ext-data-control-v1.xml
+	wayland-scanner client-header < $< > $@
+ext-data-control-v1.c: ${PROTOPREFIX}/wayland-protocols/staging/ext-data-control/ext-data-control-v1.xml
+	wayland-scanner private-code < $< > $@
 
 config.h: config.def.h
 	cp config.def.h $@
 
-wclip: ${OBJ}
+wclip.o: wclip.c ext-data-control-v1.h
+
+wclip: wclip.o ext-data-control-v1.o
 	${CC} -o $@ $^ ${LDFLAGS}
 
 clean:
-	rm -f wclip ${OBJ} wclip-${VERSION}.tar.gz
+	rm -f wclip wclip.o ext-data-control-v1.* wclip-${VERSION}.tar.gz
 
 dist: clean
 	mkdir -p wclip-${VERSION}
