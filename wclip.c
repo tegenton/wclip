@@ -35,31 +35,6 @@ void
 on_global_remove(void *data, struct wl_registry *registry, unsigned int name) {
 }
 
-void
-on_send(void *data, struct ext_data_control_source_v1* source, const char *mime_type, int fd) {
-	data_t *buf = (data_t*) data;
-	size_t offset = 0;
-	ssize_t len;
-
-	while (offset < buf->size && (len = write(fd, buf->data + offset, buf->size - offset)) > -1)
-		offset += len;
-	close(fd);
-}
-
-void
-on_cancel(void *data, struct ext_data_control_source_v1 *source) {
-	data_t *buf = (data_t*) data;
-	if (buf->data)
-		munmap(buf->data, max_copy_size);
-
-	ext_data_control_source_v1_destroy(source);
-
-	// todo: maybe pass this around in data for explicit release?
-	//close_connection(wl_conn);
-
-	exit(EXIT_SUCCESS);
-}
-
 int
 open_connection(wl_t *wl_conn) {
 	struct wl_registry *registry;
@@ -126,6 +101,31 @@ close_connection(wl_t *wl_conn) {
 		wl_display_disconnect(wl_conn->display);
 }
 
+void
+on_send(void *data, struct ext_data_control_source_v1* source, const char *mime_type, int fd) {
+	data_t *buf = (data_t*) data;
+	size_t offset = 0;
+	ssize_t len;
+
+	while (offset < buf->size && (len = write(fd, buf->data + offset, buf->size - offset)) > -1)
+		offset += len;
+	close(fd);
+}
+
+void
+on_cancel(void *data, struct ext_data_control_source_v1 *source) {
+	data_t *buf = (data_t*) data;
+	if (buf->data)
+		munmap(buf->data, max_copy_size);
+
+	ext_data_control_source_v1_destroy(source);
+
+	// todo: maybe pass this around in data for explicit release?
+	//close_connection(wl_conn);
+
+	exit(EXIT_SUCCESS);
+}
+
 int
 offer_data(wl_t *wl_conn, data_t *buf) {
 	struct ext_data_control_source_v1 *source;
@@ -153,6 +153,47 @@ offer_data(wl_t *wl_conn, data_t *buf) {
 	return 0;
 }
 
+void
+on_offer(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *id) {
+	fprintf(stderr, "offer\n");
+	ext_data_control_offer_v1_receive(id, "text/plain", dup(STDOUT_FILENO));
+}
+
+void
+on_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *id) {
+	fprintf(stderr, "selection\n");
+}
+
+void
+on_finished(void *data, struct ext_data_control_device_v1 *device) {
+	fprintf(stderr, "finish\n");
+}
+
+void
+on_primary_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *id) {
+	fprintf(stderr, "primary\n");
+}
+
+int
+check_offers(wl_t *wl_conn) {
+	struct ext_data_control_device_v1_listener *listener;
+
+	if (!(listener = malloc(sizeof(struct ext_data_control_device_v1_listener)))) {
+		return 1;
+	}
+
+	listener->data_offer = &on_offer;
+	listener->selection = &on_selection;
+	listener->finished = &on_finished;
+	listener->primary_selection = &on_primary_selection;
+
+	if (!ext_data_control_device_v1_add_listener(wl_conn->data_control_device, listener, NULL)) {
+		return 2;
+	}
+
+	return 0;
+}
+
 ssize_t
 copy_fd_to_buf(int fd, data_t *buf) {
 	ssize_t len = 0;
@@ -165,9 +206,65 @@ copy_fd_to_buf(int fd, data_t *buf) {
 }
 
 int
+copy(wl_t *wl_conn) {
+	data_t *copy_buffer = NULL;
+	/* copying */
+	if (!(copy_buffer = malloc(sizeof(data_t)))) {
+		perror("Could not allocate memory");
+		goto cleanup;
+	}
+
+	copy_buffer->size = 0;
+
+	if ((copy_buffer->data = mmap(NULL, max_copy_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED) {
+		perror("Could not map copy buffer");
+		goto cleanup;
+	}
+
+	if (copy_fd_to_buf(STDIN_FILENO, copy_buffer) < 0) {
+		perror("Could not copy stdin to buffer");
+		goto cleanup;
+	}
+
+	if (offer_data(wl_conn, copy_buffer)) {
+		perror("Could not install Wayland listener");
+		goto cleanup;
+	}
+
+	if (daemon(0, 0) < 0) {
+		perror("Could not daemonize");
+		goto cleanup;
+	}
+
+	while (wl_display_dispatch(wl_conn->display) > -1);
+
+cleanup:
+	if (copy_buffer) {
+		if (copy_buffer->data)
+			if (munmap(copy_buffer->data, max_copy_size))
+				perror("And another error deleting unmapping");
+		free(copy_buffer);
+	}
+	return -1;
+}
+
+int
+paste(wl_t *wl_conn) {
+	if (check_offers(wl_conn) < 0) {
+		perror("Could not install Wayland listener");
+		goto cleanup;
+	}
+
+	while (wl_display_dispatch(wl_conn->display) > -1);
+
+cleanup:
+	close_connection(wl_conn);
+	return -1;
+}
+
+int
 main(int argc, char *argv[]) {
 	int mode, opt;
-	data_t *copy_buffer = NULL;
 	wl_t *wl_conn = NULL;
 
 	mode = 0; /* default to copying */
@@ -196,54 +293,18 @@ main(int argc, char *argv[]) {
 	}
 
 	if (mode == 0) {
-		/* copying */
-		if (!(copy_buffer = malloc(sizeof(data_t)))) {
-			perror("Could not allocate memory");
+		if (!copy(wl_conn)) {
 			goto cleanup;
 		}
-
-		copy_buffer->size = 0;
-
-		if ((copy_buffer->data = mmap(NULL, max_copy_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED) {
-			perror("Could not map copy buffer");
-			goto cleanup;
-		}
-
-		if (copy_fd_to_buf(STDIN_FILENO, copy_buffer) < 0) {
-			perror("Could not copy stdin to buffer");
-			goto cleanup;
-		}
-
-		if (offer_data(wl_conn, copy_buffer)) {
-			perror("Could not install Wayland listener");
-			goto cleanup;
-		}
-
-		if (daemon(0, 0) < 0) {
-			perror("Could not daemonize");
-			goto cleanup;
-		}
-
-		while (wl_display_dispatch(wl_conn->display) > -1);
-
-		goto cleanup;
 	} else {
-		printf("paste logic goes here\n");
-		close_connection(wl_conn);
+		if (!paste(wl_conn)) {
+			goto cleanup;
+		}
 	}
-
 	return EXIT_SUCCESS;
 
 cleanup:
-	if (copy_buffer) {
-		if (copy_buffer->data)
-			if (munmap(copy_buffer->data, max_copy_size))
-				perror("And another error deleting unmapping");
-		free(copy_buffer);
-	}
-	if (wl_conn) {
+	if (wl_conn)
 		close_connection(wl_conn);
-		free(wl_conn);
-	}
 	return EXIT_FAILURE;
 }
