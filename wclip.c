@@ -13,9 +13,8 @@
 typedef struct wl_s {
 	struct wl_display *display;
 	struct wl_seat *seat;
-	struct wl_data_device_manager *data_device_manager;
 	struct ext_data_control_manager_v1 *data_control_manager;
-	struct wl_data_device *data_device;
+	struct ext_data_control_device_v1 *data_control_device;
 } wl_t;
 
 typedef struct data_s {
@@ -25,11 +24,8 @@ typedef struct data_s {
 
 void
 on_global_add(void *data, struct wl_registry *registry, unsigned int name, const char *iface, unsigned int ver) {
-	printf("%s ver %d\n", iface, ver);
 	wl_t *wl_conn = (wl_t*) data;
-	if (!strcmp(iface, wl_data_device_manager_interface.name))
-		wl_conn->data_device_manager = wl_registry_bind(registry, name, &wl_data_device_manager_interface, ver);
-	else if (!strcmp(iface, wl_seat_interface.name))
+	if (!strcmp(iface, wl_seat_interface.name))
 		wl_conn->seat = wl_registry_bind(registry, name, &wl_seat_interface, ver);
 	else if (!strcmp(iface, ext_data_control_manager_v1_interface.name))
 		wl_conn->data_control_manager = wl_registry_bind(registry, name, &ext_data_control_manager_v1_interface, ver);
@@ -37,51 +33,31 @@ on_global_add(void *data, struct wl_registry *registry, unsigned int name, const
 
 void
 on_global_remove(void *data, struct wl_registry *registry, unsigned int name) {
-	fprintf(stderr, "removed: %d\n", name);
 }
 
 void
-on_target(void *data, struct wl_data_source *wl_data_source, const char *mime_type) {
-	fprintf(stderr, "target\n");
-}
-
-void
-on_send(void *data, struct wl_data_source* wl_data_source, const char *mime_type, int fd) {
-	fprintf(stderr, "send\n");
+on_send(void *data, struct ext_data_control_source_v1* source, const char *mime_type, int fd) {
 	data_t *buf = (data_t*) data;
 	size_t offset = 0;
 	ssize_t len;
 
-	while (offset < buf->size && (len = write(fd, buf->data + offset, buf->size - offset) > -1))
+	while (offset < buf->size && (len = write(fd, buf->data + offset, buf->size - offset)) > -1)
 		offset += len;
+	close(fd);
 }
 
 void
-on_cancel(void *data, struct wl_data_source *wl_data_source) {
-	fprintf(stderr, "cancel\n");
+on_cancel(void *data, struct ext_data_control_source_v1 *source) {
 	data_t *buf = (data_t*) data;
 	if (buf->data)
 		munmap(buf->data, max_copy_size);
+
+	ext_data_control_source_v1_destroy(source);
 
 	// todo: maybe pass this around in data for explicit release?
 	//close_connection(wl_conn);
 
 	exit(EXIT_SUCCESS);
-}
-
-void
-on_dnd_drop(void *data, struct wl_data_source *wl_data_source) {
-	fprintf(stderr, "drop\n");
-}
-
-void
-on_dnd_finish(void *data, struct wl_data_source *wl_data_source) {
-	fprintf(stderr, "finish\n");
-}
-
-void
-on_action(void *data, struct wl_data_source *wl_data_source, unsigned int action) {
-	fprintf(stderr, "action\n");
 }
 
 int
@@ -125,12 +101,12 @@ open_connection(wl_t *wl_conn) {
 	wl_registry_destroy(registry);
 	free(registry_listener);
 
-	if (!wl_conn->data_device_manager || !wl_conn->seat) {
+	if (!wl_conn->data_control_manager || !wl_conn->seat) {
 		//fprintf(stderr, "No registered Wayland %s\n", (wl_conn->seat) ? "data device manager" : "seat");
 		return 6;
 	}
 
-	if (!(wl_conn->data_device = wl_data_device_manager_get_data_device(wl_conn->data_device_manager, wl_conn->seat))) {
+	if (!(wl_conn->data_control_device = ext_data_control_manager_v1_get_data_device(wl_conn->data_control_manager, wl_conn->seat))) {
 		//perror("Could not get Wayland data device");
 		return 7;
 	}
@@ -140,10 +116,10 @@ open_connection(wl_t *wl_conn) {
 
 void
 close_connection(wl_t *wl_conn) {
-	if (wl_conn->data_device)
-		wl_data_device_release(wl_conn->data_device);
-	if (wl_conn->data_device_manager)
-		wl_data_device_manager_destroy(wl_conn->data_device_manager);
+	if (wl_conn->data_control_device)
+		ext_data_control_device_v1_destroy(wl_conn->data_control_device);
+	if (wl_conn->data_control_manager)
+		ext_data_control_manager_v1_destroy(wl_conn->data_control_manager);
 	if (wl_conn->seat)
 		wl_seat_release(wl_conn->seat);
 	if (wl_conn->display)
@@ -152,31 +128,27 @@ close_connection(wl_t *wl_conn) {
 
 int
 offer_data(wl_t *wl_conn, data_t *buf) {
-	struct wl_data_source *data_source;
-	struct wl_data_source_listener *data_source_listener;
+	struct ext_data_control_source_v1 *source;
+	struct ext_data_control_source_v1_listener *listener;
 
-	if (!(data_source = wl_data_device_manager_create_data_source(wl_conn->data_device_manager))) {
+	if (!(source = ext_data_control_manager_v1_create_data_source(wl_conn->data_control_manager))) {
 		return 1;
 	}
 
-	if (!(data_source_listener = malloc(sizeof(struct wl_data_source_listener)))) {
+	if (!(listener = malloc(sizeof(struct ext_data_control_source_v1_listener)))) {
 		return 2;
 	}
 
-	data_source_listener->target = &on_target;
-	data_source_listener->send = &on_send;
-	data_source_listener->cancelled = &on_cancel;
-	data_source_listener->dnd_drop_performed = &on_dnd_drop;
-	data_source_listener->dnd_finished = &on_dnd_finish;
-	data_source_listener->action = &on_action;
+	listener->send = &on_send;
+	listener->cancelled = &on_cancel;
 
-	if (wl_data_source_add_listener(data_source, data_source_listener, buf)) {
+	if (ext_data_control_source_v1_add_listener(source, listener, buf)) {
 		return 3;
 	}
 
-	wl_data_source_offer(data_source, "text/plain");
+	ext_data_control_source_v1_offer(source, "text/plain");
 
-	wl_data_device_set_selection(wl_conn->data_device, data_source, 0);
+	ext_data_control_device_v1_set_selection(wl_conn->data_control_device, source);
 
 	return 0;
 }
@@ -230,6 +202,8 @@ main(int argc, char *argv[]) {
 			goto cleanup;
 		}
 
+		copy_buffer->size = 0;
+
 		if ((copy_buffer->data = mmap(NULL, max_copy_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED) {
 			perror("Could not map copy buffer");
 			goto cleanup;
@@ -245,9 +219,12 @@ main(int argc, char *argv[]) {
 			goto cleanup;
 		}
 
-		int h;
-		while ((h = wl_display_dispatch(wl_conn->display)) > -1)
-			printf("dispatched %d events\n", h);
+		if (daemon(0, 0) < 0) {
+			perror("Could not daemonize");
+			goto cleanup;
+		}
+
+		while (wl_display_dispatch(wl_conn->display) > -1);
 
 		goto cleanup;
 	} else {
