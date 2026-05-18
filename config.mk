@@ -5,11 +5,11 @@ VERSION = 0.1
 PREFIX = /usr/local
 MANPREFIX = ${PREFIX}/share/man
 
-WLLIB = -lwayland-client
+PROTOPREFIX = /usr/share
 
 # includes and libs
-INCS =
-LIBS = ${WLLIB}
+#INCS =
+LIBS = -lwayland-client
 
 # flags
 CPPFLAGS = -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -D_POSIX_C_SOURCE=200809L -DVERSION=\"${VERSION}\"
