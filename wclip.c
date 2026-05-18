@@ -109,7 +109,7 @@ void
 on_send(void *data, struct ext_data_control_source_v1* source, const char *mime_type, int fd) {
 	data_t *buf = (data_t*) data;
 	size_t offset = 0;
-	ssize_t len;
+	ssize_t len = 0;
 
 	while (offset < buf->size && (len = write(fd, buf->data + offset, buf->size - offset)) > -1)
 		offset += len;
@@ -132,8 +132,8 @@ on_cancel(void *data, struct ext_data_control_source_v1 *source) {
 
 int
 offer_data(wl_t *wl_conn, data_t *buf) {
-	struct ext_data_control_source_v1 *source;
-	struct ext_data_control_source_v1_listener *listener;
+	struct ext_data_control_source_v1 *source = NULL;
+	struct ext_data_control_source_v1_listener *listener = NULL;
 
 	if (!(source = ext_data_control_manager_v1_create_data_source(wl_conn->data_control_manager))) {
 		goto cleanup;
@@ -280,10 +280,9 @@ cleanup:
 
 int
 main(int argc, char *argv[]) {
-	int mode, opt;
+	int mode = 0, opt = 0;
 	wl_t *wl_conn = NULL;
 
-	mode = 0; /* default to copying */
 	while ((opt = getopt(argc, argv, "io")) != -1) {
 		switch (opt) {
 			case 'i':
