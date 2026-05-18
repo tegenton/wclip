@@ -3,6 +3,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "ext-data-control-v1.h"
+
 #include "wayland.h"
 #include "config.h"
 
