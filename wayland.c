@@ -1,3 +1,4 @@
+#include <magic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -117,10 +118,32 @@ on_cancel(void *data, struct ext_data_control_source_v1 *source) {
 	exit(EXIT_SUCCESS);
 }
 
+static const char*
+check_mime(data_t *buf) {
+	magic_t cookie = NULL;
+	const char *mime = NULL;
+
+	if (!(cookie = magic_open(MAGIC_MIME_TYPE)))
+		goto cleanup;
+
+	if (magic_load(cookie, NULL))
+		goto cleanup;
+
+	if (!(mime = magic_buffer(cookie, buf->data, buf->size)))
+		goto cleanup;
+	return mime;
+
+cleanup:
+	if (cookie)
+		magic_close(cookie);
+	return NULL;
+}
+
 int
 offer_data(wl_t *wl_conn, data_t *buf) {
 	struct ext_data_control_source_v1 *source = NULL;
 	struct ext_data_control_source_v1_listener *listener = NULL;
+	const char *mime = NULL;
 
 	if (!(source = ext_data_control_manager_v1_create_data_source(wl_conn->data_control_manager))) {
 		goto cleanup;
@@ -137,7 +160,11 @@ offer_data(wl_t *wl_conn, data_t *buf) {
 		goto cleanup;
 	}
 
-	ext_data_control_source_v1_offer(source, "text/plain");
+	if (!(mime = check_mime(buf))) {
+		goto cleanup;
+	}
+
+	ext_data_control_source_v1_offer(source, mime);
 
 	ext_data_control_device_v1_set_selection(wl_conn->data_control_device, source);
 
