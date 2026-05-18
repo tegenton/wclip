@@ -37,56 +37,60 @@ on_global_remove(void *data, struct wl_registry *registry, unsigned int name) {
 
 int
 open_connection(wl_t *wl_conn) {
-	struct wl_registry *registry;
-	struct wl_registry_listener *registry_listener;
+	struct wl_registry *registry = NULL;
+	struct wl_registry_listener *listener = NULL;
 
 	if (!(wl_conn->display = wl_display_connect(NULL))) {
 		//perror("Could not connect to Wayland display");
-		return 1;
+		goto cleanup;
 	}
 
 	if (!(registry = wl_display_get_registry(wl_conn->display))) {
 		//perror("Could not access Wayland registry");
-		return 2;
+		goto cleanup;
 	}
 
-	if (!(registry_listener = malloc(sizeof(struct wl_registry_listener)))) {
+	if (!(listener = malloc(sizeof(struct wl_registry_listener)))) {
 		//perror("Could not allocate memory");
-		wl_registry_destroy(registry);
-		return 3;
+		goto cleanup;
 	}
 
-	registry_listener->global = &on_global_add;
-	registry_listener->global_remove = &on_global_remove;
+	listener->global = &on_global_add;
+	listener->global_remove = &on_global_remove;
 
-	if (wl_registry_add_listener(registry, registry_listener, wl_conn) < 0) {
+	if (wl_registry_add_listener(registry, listener, wl_conn) < 0) {
 		//perror("Could not install Wayland registry listener");
-		wl_registry_destroy(registry);
-		free(registry_listener);
-		return 4;
+		goto cleanup;
 	}
 
 	if (wl_display_roundtrip(wl_conn->display) < 0) {
 		//perror("Could not process pending Wayland requests");
-		wl_registry_destroy(registry);
-		free(registry_listener);
-		return 5;
+		goto cleanup;
 	}
 
 	wl_registry_destroy(registry);
-	free(registry_listener);
+	registry = NULL;
+	free(listener);
+	listener = NULL;
 
 	if (!wl_conn->data_control_manager || !wl_conn->seat) {
 		//fprintf(stderr, "No registered Wayland %s\n", (wl_conn->seat) ? "data device manager" : "seat");
-		return 6;
+		goto cleanup;
 	}
 
 	if (!(wl_conn->data_control_device = ext_data_control_manager_v1_get_data_device(wl_conn->data_control_manager, wl_conn->seat))) {
 		//perror("Could not get Wayland data device");
-		return 7;
+		goto cleanup;
 	}
 
 	return 0;
+
+cleanup:
+	if (listener)
+		free(listener);
+	if (registry)
+		wl_registry_destroy(registry);
+	return -1;
 }
 
 void
@@ -132,18 +136,18 @@ offer_data(wl_t *wl_conn, data_t *buf) {
 	struct ext_data_control_source_v1_listener *listener;
 
 	if (!(source = ext_data_control_manager_v1_create_data_source(wl_conn->data_control_manager))) {
-		return 1;
+		goto cleanup;
 	}
 
 	if (!(listener = malloc(sizeof(struct ext_data_control_source_v1_listener)))) {
-		return 2;
+		goto cleanup;
 	}
 
 	listener->send = &on_send;
 	listener->cancelled = &on_cancel;
 
 	if (ext_data_control_source_v1_add_listener(source, listener, buf)) {
-		return 3;
+		goto cleanup;
 	}
 
 	ext_data_control_source_v1_offer(source, "text/plain");
@@ -151,6 +155,13 @@ offer_data(wl_t *wl_conn, data_t *buf) {
 	ext_data_control_device_v1_set_selection(wl_conn->data_control_device, source);
 
 	return 0;
+
+cleanup:
+	if (listener)
+		free(listener);
+	if (source)
+		ext_data_control_source_v1_destroy(source);
+	return -1;
 }
 
 void
@@ -176,10 +187,10 @@ on_primary_selection(void *data, struct ext_data_control_device_v1 *device, stru
 
 int
 check_offers(wl_t *wl_conn) {
-	struct ext_data_control_device_v1_listener *listener;
+	struct ext_data_control_device_v1_listener *listener = NULL;
 
 	if (!(listener = malloc(sizeof(struct ext_data_control_device_v1_listener)))) {
-		return 1;
+		goto cleanup;
 	}
 
 	listener->data_offer = &on_offer;
@@ -187,11 +198,16 @@ check_offers(wl_t *wl_conn) {
 	listener->finished = &on_finished;
 	listener->primary_selection = &on_primary_selection;
 
-	if (!ext_data_control_device_v1_add_listener(wl_conn->data_control_device, listener, NULL)) {
-		return 2;
+	if (ext_data_control_device_v1_add_listener(wl_conn->data_control_device, listener, NULL)) {
+		goto cleanup;
 	}
 
 	return 0;
+
+cleanup:
+	if (listener)
+		free(listener);
+	return -1;
 }
 
 ssize_t
