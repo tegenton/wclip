@@ -8,5 +8,6 @@ ext-data-control-v1.h
 # Object files
 *.o
 
-# Compiled binary
+# Compiled binary and release
 wclip
+*.tar.gz

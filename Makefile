@@ -32,7 +32,7 @@ wclip: wclip.o wayland.o ext-data-control-v1.o
 	${CC} -o $@ $^ ${LDFLAGS}
 
 clean:
-	rm -f wclip wclip.o ext-data-control-v1.* wclip-${VERSION}.tar.gz
+	rm -f wclip wclip.o wayland.o ext-data-control-v1.* wclip-${VERSION}.tar.gz
 
 dist: clean
 	mkdir -p wclip-${VERSION}
