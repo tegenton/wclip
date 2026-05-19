@@ -131,6 +131,10 @@ check_mime(data_t *buf) {
 
 	if (!(mime = magic_buffer(cookie, buf->data, buf->size)))
 		goto cleanup;
+
+	if (!strcmp("text/plain", mime))
+		mime = "text/plain;charset=utf-8";
+
 	return mime;
 
 cleanup:
@@ -182,9 +186,7 @@ static void
 on_mime(void *data, struct ext_data_control_offer_v1 *offer, const char *mime_type) {
 	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
 
-	if (!strcmp("text/plain", mime_type)) {
-		offers[0] = offer;
-	}
+	offers[0] = offer;
 }
 
 static void
