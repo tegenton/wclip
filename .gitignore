@@ -1,6 +1,10 @@
 # User customization
 config.h
 
+#wayland protocol
+ext-data-control-v1.c
+ext-data-control-v1.h
+
 # Object files
 *.o
 
