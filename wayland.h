@@ -11,11 +11,19 @@ typedef struct wl_s {
 
 typedef struct data_s {
 	size_t size;
+	char *mime;
 	char *data;
 } data_t;
+
+typedef struct clipboard_s {
+	char *mime;
+	struct ext_data_control_offer_v1 *offer;
+	struct ext_data_control_offer_v1 *selection;
+	struct ext_data_control_offer_v1 *primary_selection;
+} clipboard_t;
 
 int open_connection(wl_t *wl_conn);
 void close_connection(wl_t *wl_conn);
 
 int offer_data(wl_t *wl_conn, data_t *buf);
-int check_offers(wl_t *wl_conn, struct ext_data_control_offer_v1 **offers);
+int check_offers(wl_t *wl_conn, clipboard_t *clipboard);

@@ -13,6 +13,7 @@
 typedef struct flag_s{
 	int fd;
 	int (*mode)(wl_t*, struct flag_s);
+	char *mime;
 } flag_t;
 
 static ssize_t copy_fd_to_buf(int fd, data_t *buf);
@@ -44,6 +45,7 @@ copy(wl_t *wl_conn, flag_t f) {
 	}
 
 	copy_buffer->size = 0;
+	copy_buffer->mime = f.mime;
 
 	if ((copy_buffer->data = mmap(NULL, max_copy_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED) {
 		perror("Could not map copy buffer");
@@ -79,14 +81,19 @@ cleanup:
 
 static int
 paste(wl_t *wl_conn, flag_t f) {
-	struct ext_data_control_offer_v1 **offers = NULL;
+	clipboard_t *clipboard = NULL;
 
-	if (!(offers = malloc(sizeof(struct ext_data_control_offer_v1*) * 3))) {
+	if (!(clipboard = malloc(sizeof(clipboard_t)))) {
 		perror("Could not allocate memory");
 		goto cleanup;
 	}
 
-	if (check_offers(wl_conn, offers) < 0) {
+	clipboard->mime = f.mime;
+	clipboard->offer = NULL;
+	clipboard->selection = NULL;
+	clipboard->primary_selection = NULL;
+
+	if (check_offers(wl_conn, clipboard) < 0) {
 		perror("Could not install Wayland listener");
 		goto cleanup;
 	}
@@ -96,44 +103,54 @@ paste(wl_t *wl_conn, flag_t f) {
 		goto cleanup;
 	}
 
-	if (!offers[1]) {
+	if (!clipboard->selection) {
 		fprintf(stderr, "Nothing is copied\n");
 		goto cleanup;
 	}
 
-	ext_data_control_offer_v1_receive(offers[1], "text/plain", f.fd);
+	if (!f.mime)
+		f.mime = "text/plain";
+
+	ext_data_control_offer_v1_receive(clipboard->selection, f.mime, f.fd);
 
 	if (wl_display_roundtrip(wl_conn->display) < 0) {
 		perror("Could not process paste request");
 		goto cleanup;
 	}
 
-	for (int i = 0; i < 3; i++)
-		if (offers[i])
-			ext_data_control_offer_v1_destroy(offers[i]);
-	free(offers);
+	if (clipboard->offer)
+		ext_data_control_offer_v1_destroy(clipboard->offer);
+	if (clipboard->selection)
+		ext_data_control_offer_v1_destroy(clipboard->selection);
+	if (clipboard->primary_selection)
+		ext_data_control_offer_v1_destroy(clipboard->primary_selection);
+	free(clipboard);
 	return 0;
 
 cleanup:
-	if (offers) {
-		for (int i = 0; i < 3; i++)
-			if (offers[i])
-				ext_data_control_offer_v1_destroy(offers[i]);
-		free(offers);
-	}
+	if (clipboard->offer)
+		ext_data_control_offer_v1_destroy(clipboard->offer);
+	if (clipboard->selection)
+		ext_data_control_offer_v1_destroy(clipboard->selection);
+	if (clipboard->primary_selection)
+		ext_data_control_offer_v1_destroy(clipboard->primary_selection);
+	free(clipboard);
 	return -1;
 }
 
 int
 main(int argc, char *argv[]) {
 	int opt = 0;
-	flag_t f = {-1, &copy};
+	flag_t f = {-1, &copy, NULL};
 	wl_t *wl_conn = NULL;
 
-	while ((opt = getopt(argc, argv, "io")) != -1) {
+	while ((opt = getopt(argc, argv, "im:o")) != -1) {
 		switch (opt) {
 			case 'i':
 				f.mode = &copy;
+				break;
+			case 'm':
+				f.mime = optarg;
 				break;
 			case 'o':
 				f.mode = &paste;

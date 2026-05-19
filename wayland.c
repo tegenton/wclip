@@ -35,7 +35,7 @@ int open_connection(wl_t *wl_conn);
 void close_connection(wl_t *wl_conn);
 
 int offer_data(wl_t *wl_conn, data_t *buf);
-int check_offers(wl_t *wl_conn, struct ext_data_control_offer_v1 **offers);
+int check_offers(wl_t *wl_conn, clipboard_t *clipboard);
 
 static void
 on_global_add(void *data, struct wl_registry *registry, unsigned int name, const char *iface, unsigned int ver) {
@@ -64,6 +64,8 @@ on_send(void *data, struct ext_data_control_source_v1* source, const char *mime_
 static void
 on_cancel(void *data, struct ext_data_control_source_v1 *source) {
 	data_t *buf = (data_t*) data;
+	if (buf->mime)
+		free(buf->mime);
 	if (buf->data)
 		munmap(buf->data, buf->size);
 	free(buf);
@@ -78,14 +80,16 @@ on_cancel(void *data, struct ext_data_control_source_v1 *source) {
 
 static void
 on_mime(void *data, struct ext_data_control_offer_v1 *offer, const char *mime) {
-	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
+	clipboard_t *clipboard = (clipboard_t*) data;
 
-	offers[0] = offer;
+	if (!clipboard->mime || !strcmp(clipboard->mime, mime)) {
+		clipboard->offer = offer;
+	}
 }
 
 static void
 on_offer(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer) {
-	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
+	clipboard_t *clipboard = (clipboard_t*) data;
 	struct ext_data_control_offer_v1_listener *listener = NULL;
 
 	if (!(listener = malloc(sizeof(struct ext_data_control_offer_v1_listener))))
@@ -93,7 +97,7 @@ on_offer(void *data, struct ext_data_control_device_v1 *device, struct ext_data_
 
 	listener->offer = &on_mime;
 
-	if (ext_data_control_offer_v1_add_listener(offer, listener, offers))
+	if (ext_data_control_offer_v1_add_listener(offer, listener, clipboard))
 		goto cleanup;
 
 	return;
@@ -105,23 +109,23 @@ cleanup:
 
 static void
 on_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer) {
-	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
-	if (offers[0] == offer) {
-		if (offers[1])
-			ext_data_control_offer_v1_destroy(offers[1]);
-		offers[1] = offer;
-		offers[0] = NULL;
+	clipboard_t *clipboard = (clipboard_t*) data;
+	if (clipboard->offer == offer) {
+		if (clipboard->selection)
+			ext_data_control_offer_v1_destroy(clipboard->selection);
+		clipboard->selection = offer;
+		clipboard->offer = NULL;
 	}
 }
 
 static void
 on_primary_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer) {
-	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
-	if (offers[0] == offer) {
-		if (offers[2])
-			ext_data_control_offer_v1_destroy(offers[2]);
-		offers[2] = offer;
-		offers[0] = NULL;
+	clipboard_t *clipboard = (clipboard_t*) data;
+	if (clipboard->offer == offer) {
+		if (clipboard->primary_selection)
+			ext_data_control_offer_v1_destroy(clipboard->primary_selection);
+		clipboard->primary_selection = offer;
+		clipboard->offer = NULL;
 	}
 }
 
@@ -231,7 +235,6 @@ int
 offer_data(wl_t *wl_conn, data_t *buf) {
 	struct ext_data_control_source_v1 *source = NULL;
 	struct ext_data_control_source_v1_listener *listener = NULL;
-	char *mime = NULL;
 
 	if (!(source = ext_data_control_manager_v1_create_data_source(wl_conn->data_control_manager))) {
 		goto cleanup;
@@ -248,12 +251,13 @@ offer_data(wl_t *wl_conn, data_t *buf) {
 		goto cleanup;
 	}
 
-	if (!(mime = check_mime(buf))) {
-		goto cleanup;
+	if (!buf->mime) {
+		if (!(buf->mime = check_mime(buf))) {
+			goto cleanup;
+		}
 	}
 
-	ext_data_control_source_v1_offer(source, mime);
-	free(mime);
+	ext_data_control_source_v1_offer(source, buf->mime);
 
 	ext_data_control_device_v1_set_selection(wl_conn->data_control_device, source);
 
@@ -268,7 +272,7 @@ cleanup:
 }
 
 int
-check_offers(wl_t *wl_conn, struct ext_data_control_offer_v1 **offers) {
+check_offers(wl_t *wl_conn, clipboard_t *clipboard) {
 	struct ext_data_control_device_v1_listener *listener = NULL;
 
 	if (!(listener = malloc(sizeof(struct ext_data_control_device_v1_listener)))) {
@@ -280,7 +284,7 @@ check_offers(wl_t *wl_conn, struct ext_data_control_offer_v1 **offers) {
 	listener->primary_selection = &on_primary_selection;
 	listener->finished = &on_finished;
 
-	if (ext_data_control_device_v1_add_listener(wl_conn->data_control_device, listener, offers)) {
+	if (ext_data_control_device_v1_add_listener(wl_conn->data_control_device, listener, clipboard)) {
 		goto cleanup;
 	}
 
