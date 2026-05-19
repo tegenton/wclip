@@ -1,4 +1,5 @@
-#include <stdio.h>                // for perror, fprintf, NULL, stderr
+#include <fcntl.h>                // for open
+#include <stdio.h>                // for perror, fprintf
 #include <stdlib.h>               // for free, malloc, exit
 #include <sys/mman.h>             // for mmap, munmap
 #include <sys/types.h>            // for ssize_t
@@ -9,10 +10,15 @@
 #include "wayland.h"
 #include "config.h"
 
+typedef struct flag_s{
+	int fd;
+	int (*mode)(wl_t*, struct flag_s);
+} flag_t;
+
 static ssize_t copy_fd_to_buf(int fd, data_t *buf);
 
-static int copy(wl_t *wl_conn);
-static int paste(wl_t *wl_conn);
+static int copy(wl_t *wl_conn, flag_t f);
+static int paste(wl_t *wl_conn, flag_t f);
 
 static ssize_t
 copy_fd_to_buf(int fd, data_t *buf) {
@@ -29,7 +35,7 @@ copy_fd_to_buf(int fd, data_t *buf) {
 }
 
 static int
-copy(wl_t *wl_conn) {
+copy(wl_t *wl_conn, flag_t f) {
 	data_t *copy_buffer = NULL;
 
 	if (!(copy_buffer = malloc(sizeof(data_t)))) {
@@ -44,7 +50,7 @@ copy(wl_t *wl_conn) {
 		goto cleanup;
 	}
 
-	if (copy_fd_to_buf(STDIN_FILENO, copy_buffer) < 0) {
+	if (copy_fd_to_buf(f.fd, copy_buffer) < 0) {
 		perror("Could not copy stdin to buffer");
 		goto cleanup;
 	}
@@ -72,7 +78,7 @@ cleanup:
 }
 
 static int
-paste(wl_t *wl_conn) {
+paste(wl_t *wl_conn, flag_t f) {
 	struct ext_data_control_offer_v1 **offers = NULL;
 
 	if (!(offers = malloc(sizeof(struct ext_data_control_offer_v1*) * 3))) {
@@ -95,7 +101,7 @@ paste(wl_t *wl_conn) {
 		goto cleanup;
 	}
 
-	ext_data_control_offer_v1_receive(offers[1], "text/plain", STDOUT_FILENO);
+	ext_data_control_offer_v1_receive(offers[1], "text/plain", f.fd);
 
 	if (wl_display_roundtrip(wl_conn->display) < 0) {
 		perror("Could not process paste request");
@@ -121,21 +127,42 @@ cleanup:
 int
 main(int argc, char *argv[]) {
 	int opt = 0;
-	int (*mode)(wl_t*) = &copy;
+	flag_t f = {-1, &copy};
 	wl_t *wl_conn = NULL;
 
 	while ((opt = getopt(argc, argv, "io")) != -1) {
 		switch (opt) {
 			case 'i':
-				mode = &copy;
+				f.mode = &copy;
 				break;
 			case 'o':
-				mode = &paste;
+				f.mode = &paste;
 				break;
 			default:
-				fprintf(stderr, "Usage: %s [-i|-o]\n", argv[0]);
+				fprintf(stderr, "Usage: %s [-i|-o] [file]\n", argv[0]);
 				return EXIT_FAILURE;
 		}
+	}
+
+	if (optind < argc) {
+		int flags = 0;
+		if (optind + 1 < argc) {
+			fprintf(stderr, "Usage: %s [-i|-o] [file]\n", argv[0]);
+			return EXIT_FAILURE;
+		}
+		if (f.mode == &copy)
+			flags = O_RDONLY;
+		else
+			flags = O_WRONLY | O_CREAT | O_TRUNC;
+		if ((f.fd = open(argv[optind], flags)) < 0) {
+			perror("Could not open file");
+			goto cleanup;
+		}
+	} else {
+		if (f.mode == &copy)
+			f.fd = STDIN_FILENO;
+		else
+			f.fd = STDOUT_FILENO;
 	}
 
 	if (!(wl_conn = malloc(sizeof(wl_t)))) {
@@ -148,7 +175,7 @@ main(int argc, char *argv[]) {
 		goto cleanup;
 	}
 
-	if (mode(wl_conn)) {
+	if (f.mode(wl_conn, f)) {
 		goto cleanup;
 	}
 
@@ -156,6 +183,8 @@ main(int argc, char *argv[]) {
 	return EXIT_SUCCESS;
 
 cleanup:
+	if (f.fd != -1)
+		close(f.fd);
 	if (wl_conn)
 		close_connection(wl_conn);
 	return EXIT_FAILURE;

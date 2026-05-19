@@ -29,10 +29,10 @@ static void on_selection(void *data, struct ext_data_control_device_v1 *device, 
 static void on_primary_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer);
 static void on_finished(void *data, struct ext_data_control_device_v1 *device);
 
+static char* check_mime(data_t *buf);
+
 int open_connection(wl_t *wl_conn);
 void close_connection(wl_t *wl_conn);
-
-static char* check_mime(data_t *buf);
 
 int offer_data(wl_t *wl_conn, data_t *buf);
 int check_offers(wl_t *wl_conn, struct ext_data_control_offer_v1 **offers);
@@ -129,6 +129,34 @@ static void
 on_finished(void *data, struct ext_data_control_device_v1 *device) {
 }
 
+static char*
+check_mime(data_t *buf) {
+	magic_t cookie = NULL;
+	const char *mime = NULL;
+	char *mut_mime = NULL;
+
+	if (!(cookie = magic_open(MAGIC_MIME_TYPE)))
+		goto cleanup;
+
+	if (magic_load(cookie, NULL))
+		goto cleanup;
+
+	if (!(mime = magic_buffer(cookie, buf->data, buf->size)))
+		goto cleanup;
+
+	if (!strcmp("text/plain", mime))
+		mime = "text/plain;charset=utf-8";
+
+	mut_mime = strdup(mime);
+	magic_close(cookie);
+	return mut_mime;
+
+cleanup:
+	if (cookie)
+		magic_close(cookie);
+	return NULL;
+}
+
 int
 open_connection(wl_t *wl_conn) {
 	struct wl_registry *registry = NULL;
@@ -197,34 +225,6 @@ close_connection(wl_t *wl_conn) {
 		wl_seat_release(wl_conn->seat);
 	if (wl_conn->display)
 		wl_display_disconnect(wl_conn->display);
-}
-
-static char*
-check_mime(data_t *buf) {
-	magic_t cookie = NULL;
-	const char *mime = NULL;
-	char *mut_mime = NULL;
-
-	if (!(cookie = magic_open(MAGIC_MIME_TYPE)))
-		goto cleanup;
-
-	if (magic_load(cookie, NULL))
-		goto cleanup;
-
-	if (!(mime = magic_buffer(cookie, buf->data, buf->size)))
-		goto cleanup;
-
-	if (!strcmp("text/plain", mime))
-		mime = "text/plain;charset=utf-8";
-
-	mut_mime = strdup(mime);
-	magic_close(cookie);
-	return mut_mime;
-
-cleanup:
-	if (cookie)
-		magic_close(cookie);
-	return NULL;
 }
 
 int
