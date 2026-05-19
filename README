@@ -7,6 +7,7 @@ Requirements
 ------------
 wclip uses the ext-data-control-v1 Wayland extension in addition to the base
 wayland-client library.
+Libmagic is also required for MIME detection.
 
 
 Installation
