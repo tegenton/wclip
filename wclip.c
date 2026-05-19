@@ -6,10 +6,15 @@
 #include <wayland-client-core.h>  // for wl_display
 #include "ext-data-control-v1.h"  // for ext_data_control_offer_v1_destroy
 
-#include "wayland.h"              // for close_connection
-#include "config.h"               // for max_copy_size
+#include "wayland.h"
+#include "config.h"
 
-ssize_t
+static ssize_t copy_fd_to_buf(int fd, data_t *buf);
+
+static int copy(wl_t *wl_conn);
+static int paste(wl_t *wl_conn);
+
+static ssize_t
 copy_fd_to_buf(int fd, data_t *buf) {
 	ssize_t len = 0;
 	while (buf->size < max_copy_size && (len = read(fd, buf->data + buf->size, max_copy_size - buf->size)) > 0) {
@@ -17,10 +22,13 @@ copy_fd_to_buf(int fd, data_t *buf) {
 		if (buf->size == max_copy_size)
 			fprintf(stderr, "Maximum copy size reached, truncating\n");
 	}
-	return len;
+	if (len < 0)
+		return len;
+	munmap(buf->data + buf->size, max_copy_size - buf->size);
+	return buf->size;
 }
 
-int
+static int
 copy(wl_t *wl_conn) {
 	data_t *copy_buffer = NULL;
 
@@ -63,7 +71,7 @@ cleanup:
 	return -1;
 }
 
-int
+static int
 paste(wl_t *wl_conn) {
 	struct ext_data_control_offer_v1 **offers = NULL;
 
@@ -77,7 +85,10 @@ paste(wl_t *wl_conn) {
 		goto cleanup;
 	}
 
-	wl_display_dispatch(wl_conn->display);
+	if (wl_display_roundtrip(wl_conn->display) < 0) {
+		perror("Could not process Wayland requests");
+		goto cleanup;
+	}
 
 	if (!offers[1]) {
 		fprintf(stderr, "Nothing is copied\n");
@@ -85,7 +96,11 @@ paste(wl_t *wl_conn) {
 	}
 
 	ext_data_control_offer_v1_receive(offers[1], "text/plain", STDOUT_FILENO);
-	wl_display_roundtrip(wl_conn->display);
+
+	if (wl_display_roundtrip(wl_conn->display) < 0) {
+		perror("Could not process paste request");
+		goto cleanup;
+	}
 
 	for (int i = 0; i < 3; i++)
 		if (offers[i])
@@ -105,16 +120,17 @@ cleanup:
 
 int
 main(int argc, char *argv[]) {
-	int mode = 0, opt = 0;
+	int opt = 0;
+	int (*mode)(wl_t*) = &copy;
 	wl_t *wl_conn = NULL;
 
 	while ((opt = getopt(argc, argv, "io")) != -1) {
 		switch (opt) {
 			case 'i':
-				mode = 0;
+				mode = &copy;
 				break;
 			case 'o':
-				mode = 1;
+				mode = &paste;
 				break;
 			default:
 				fprintf(stderr, "Usage: %s [-i|-o]\n", argv[0]);
@@ -132,12 +148,8 @@ main(int argc, char *argv[]) {
 		goto cleanup;
 	}
 
-	if (mode == 0) {
-		if (copy(wl_conn))
-			goto cleanup;
-	} else {
-		if (paste(wl_conn))
-			goto cleanup;
+	if (mode(wl_conn)) {
+		goto cleanup;
 	}
 
 	close_connection(wl_conn);
