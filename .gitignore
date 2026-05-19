@@ -1,8 +1,13 @@
 # User customization
 config.h
 
+#wayland protocol
+ext-data-control-v1.c
+ext-data-control-v1.h
+
 # Object files
 *.o
 
-# Compiled binary
+# Compiled binary and release
 wclip
+*.tar.gz

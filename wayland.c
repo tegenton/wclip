@@ -1,14 +1,41 @@
-#include <magic.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
-
-#include <wayland-client.h>
-#include "ext-data-control-v1.h"
+#include <magic.h>                    // for magic_buffer
+#include <stdlib.h>                   // for free, malloc, exit
+#include <string.h>                   // for strcmp
+#include <sys/mman.h>                 // for munmap
+#include <sys/types.h>                // for ssize_t
+#include <unistd.h>                   // for close, write
+#include <wayland-client-core.h>      // for wl_display
+#include <wayland-client-protocol.h>  // for wl_registry
+#include <wayland-util.h>             // for wl_interface
+#include "ext-data-control-v1.h"      // for ext_data_control
 
 #include "wayland.h"
-#include "config.h"
+
+struct ext_data_control_device_v1;
+struct ext_data_control_offer_v1;
+struct ext_data_control_source_v1;
+struct wl_registry;
+
+static void on_global_add(void *data, struct wl_registry *registry, unsigned int name, const char *iface, unsigned int ver);
+static void on_global_remove(void *data, struct wl_registry *registry, unsigned int name);
+
+static void on_send(void *data, struct ext_data_control_source_v1* source, const char *mime, int fd);
+static void on_cancel(void *data, struct ext_data_control_source_v1 *source);
+
+static void on_mime(void *data, struct ext_data_control_offer_v1 *offer, const char *mime);
+
+static void on_offer(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer);
+static void on_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer);
+static void on_primary_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer);
+static void on_finished(void *data, struct ext_data_control_device_v1 *device);
+
+static char* check_mime(data_t *buf);
+
+int open_connection(wl_t *wl_conn);
+void close_connection(wl_t *wl_conn);
+
+int offer_data(wl_t *wl_conn, data_t *buf, int primary);
+int check_offers(wl_t *wl_conn, clipboard_t *clipboard);
 
 static void
 on_global_add(void *data, struct wl_registry *registry, unsigned int name, const char *iface, unsigned int ver) {
@@ -21,6 +48,117 @@ on_global_add(void *data, struct wl_registry *registry, unsigned int name, const
 
 static void
 on_global_remove(void *data, struct wl_registry *registry, unsigned int name) {
+}
+
+static void
+on_send(void *data, struct ext_data_control_source_v1* source, const char *mime_type, int fd) {
+	data_t *buf = (data_t*) data;
+	size_t offset = 0;
+	ssize_t len = 0;
+
+	while (offset < buf->size && (len = write(fd, buf->data + offset, buf->size - offset)) > -1)
+		offset += len;
+	close(fd);
+}
+
+static void
+on_cancel(void *data, struct ext_data_control_source_v1 *source) {
+	data_t *buf = (data_t*) data;
+	if (buf->mime)
+		free(buf->mime);
+	if (buf->data)
+		munmap(buf->data, buf->size);
+	free(buf);
+
+	ext_data_control_source_v1_destroy(source);
+
+	// todo: maybe pass this around in data for explicit release?
+	//close_connection(wl_conn);
+
+	exit(EXIT_SUCCESS);
+}
+
+static void
+on_mime(void *data, struct ext_data_control_offer_v1 *offer, const char *mime) {
+	clipboard_t *clipboard = (clipboard_t*) data;
+
+	if (!clipboard->mime || !strcmp(clipboard->mime, mime)) {
+		clipboard->offer = offer;
+	}
+}
+
+static void
+on_offer(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer) {
+	clipboard_t *clipboard = (clipboard_t*) data;
+	struct ext_data_control_offer_v1_listener *listener = NULL;
+
+	if (!(listener = malloc(sizeof(struct ext_data_control_offer_v1_listener))))
+		goto cleanup;
+
+	listener->offer = &on_mime;
+
+	if (ext_data_control_offer_v1_add_listener(offer, listener, clipboard))
+		goto cleanup;
+
+	return;
+
+cleanup:
+	if (listener)
+		free(listener);
+}
+
+static void
+on_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer) {
+	clipboard_t *clipboard = (clipboard_t*) data;
+	if (clipboard->offer == offer) {
+		if (clipboard->selection)
+			ext_data_control_offer_v1_destroy(clipboard->selection);
+		clipboard->selection = offer;
+		clipboard->offer = NULL;
+	}
+}
+
+static void
+on_primary_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *offer) {
+	clipboard_t *clipboard = (clipboard_t*) data;
+	if (clipboard->offer == offer) {
+		if (clipboard->primary_selection)
+			ext_data_control_offer_v1_destroy(clipboard->primary_selection);
+		clipboard->primary_selection = offer;
+		clipboard->offer = NULL;
+	}
+}
+
+static void
+on_finished(void *data, struct ext_data_control_device_v1 *device) {
+}
+
+static char*
+check_mime(data_t *buf) {
+	magic_t cookie = NULL;
+	const char *mime = NULL;
+	char *mut_mime = NULL;
+
+	if (!(cookie = magic_open(MAGIC_MIME_TYPE)))
+		goto cleanup;
+
+	if (magic_load(cookie, NULL))
+		goto cleanup;
+
+	if (!(mime = magic_buffer(cookie, buf->data, buf->size)))
+		goto cleanup;
+
+	if (!strcmp("text/plain", mime))
+		mime = "text/plain;charset=utf-8";
+
+	mut_mime = strdup(mime);
+	magic_close(cookie);
+	return mut_mime;
+
+cleanup:
+	if (cookie)
+		magic_close(cookie);
+	return NULL;
 }
 
 int
@@ -62,7 +200,7 @@ open_connection(wl_t *wl_conn) {
 	listener = NULL;
 
 	if (!wl_conn->data_control_manager || !wl_conn->seat) {
-		//fprintf(stderr, "No registered Wayland %s\n", (wl_conn->seat) ? "data device manager" : "seat");
+		//fprintf(stderr, "No registered Wayland %s\n", (wl_conn->seat) ? "data control manager" : "seat");
 		goto cleanup;
 	}
 
@@ -93,61 +231,10 @@ close_connection(wl_t *wl_conn) {
 		wl_display_disconnect(wl_conn->display);
 }
 
-static void
-on_send(void *data, struct ext_data_control_source_v1* source, const char *mime_type, int fd) {
-	data_t *buf = (data_t*) data;
-	size_t offset = 0;
-	ssize_t len = 0;
-
-	while (offset < buf->size && (len = write(fd, buf->data + offset, buf->size - offset)) > -1)
-		offset += len;
-	close(fd);
-}
-
-static void
-on_cancel(void *data, struct ext_data_control_source_v1 *source) {
-	data_t *buf = (data_t*) data;
-	if (buf->data)
-		munmap(buf->data, max_copy_size);
-
-	ext_data_control_source_v1_destroy(source);
-
-	// todo: maybe pass this around in data for explicit release?
-	//close_connection(wl_conn);
-
-	exit(EXIT_SUCCESS);
-}
-
-static const char*
-check_mime(data_t *buf) {
-	magic_t cookie = NULL;
-	const char *mime = NULL;
-
-	if (!(cookie = magic_open(MAGIC_MIME_TYPE)))
-		goto cleanup;
-
-	if (magic_load(cookie, NULL))
-		goto cleanup;
-
-	if (!(mime = magic_buffer(cookie, buf->data, buf->size)))
-		goto cleanup;
-
-	if (!strcmp("text/plain", mime))
-		mime = "text/plain;charset=utf-8";
-
-	return mime;
-
-cleanup:
-	if (cookie)
-		magic_close(cookie);
-	return NULL;
-}
-
 int
-offer_data(wl_t *wl_conn, data_t *buf) {
+offer_data(wl_t *wl_conn, data_t *buf, int primary) {
 	struct ext_data_control_source_v1 *source = NULL;
 	struct ext_data_control_source_v1_listener *listener = NULL;
-	const char *mime = NULL;
 
 	if (!(source = ext_data_control_manager_v1_create_data_source(wl_conn->data_control_manager))) {
 		goto cleanup;
@@ -164,13 +251,18 @@ offer_data(wl_t *wl_conn, data_t *buf) {
 		goto cleanup;
 	}
 
-	if (!(mime = check_mime(buf))) {
-		goto cleanup;
+	if (!buf->mime) {
+		if (!(buf->mime = check_mime(buf))) {
+			goto cleanup;
+		}
 	}
 
-	ext_data_control_source_v1_offer(source, mime);
+	ext_data_control_source_v1_offer(source, buf->mime);
 
-	ext_data_control_device_v1_set_selection(wl_conn->data_control_device, source);
+	if (primary)
+		ext_data_control_device_v1_set_primary_selection(wl_conn->data_control_device, source);
+	else
+		ext_data_control_device_v1_set_selection(wl_conn->data_control_device, source);
 
 	return 0;
 
@@ -182,61 +274,8 @@ cleanup:
 	return -1;
 }
 
-static void
-on_mime(void *data, struct ext_data_control_offer_v1 *offer, const char *mime_type) {
-	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
-
-	offers[0] = offer;
-}
-
-static void
-on_offer(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *id) {
-	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
-	struct ext_data_control_offer_v1_listener *listener = NULL;
-
-	if (!(listener = malloc(sizeof(struct ext_data_control_offer_v1_listener))))
-		goto cleanup;
-
-	listener->offer = &on_mime;
-
-	if (ext_data_control_offer_v1_add_listener(id, listener, offers))
-		goto cleanup;
-
-	return;
-
-cleanup:
-	if (listener)
-		free(listener);
-}
-
-static void
-on_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *id) {
-	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
-	if (offers[0] == id) {
-		if (offers[1])
-			ext_data_control_offer_v1_destroy(offers[1]);
-		offers[1] = id;
-		offers[0] = NULL;
-	}
-}
-
-static void
-on_finished(void *data, struct ext_data_control_device_v1 *device) {
-}
-
-static void
-on_primary_selection(void *data, struct ext_data_control_device_v1 *device, struct ext_data_control_offer_v1 *id) {
-	struct ext_data_control_offer_v1 **offers = (struct ext_data_control_offer_v1**) data;
-	if (offers[0] == id) {
-		if (offers[2])
-			ext_data_control_offer_v1_destroy(offers[2]);
-		offers[2] = id;
-		offers[0] = NULL;
-	}
-}
-
 int
-check_offers(wl_t *wl_conn, struct ext_data_control_offer_v1 **offers) {
+check_offers(wl_t *wl_conn, clipboard_t *clipboard) {
 	struct ext_data_control_device_v1_listener *listener = NULL;
 
 	if (!(listener = malloc(sizeof(struct ext_data_control_device_v1_listener)))) {
@@ -245,10 +284,10 @@ check_offers(wl_t *wl_conn, struct ext_data_control_offer_v1 **offers) {
 
 	listener->data_offer = &on_offer;
 	listener->selection = &on_selection;
-	listener->finished = &on_finished;
 	listener->primary_selection = &on_primary_selection;
+	listener->finished = &on_finished;
 
-	if (ext_data_control_device_v1_add_listener(wl_conn->data_control_device, listener, offers)) {
+	if (ext_data_control_device_v1_add_listener(wl_conn->data_control_device, listener, clipboard)) {
 		goto cleanup;
 	}
 

@@ -25,14 +25,14 @@ ext-data-control-v1.c: ${PROTOPREFIX}/wayland-protocols/staging/ext-data-control
 config.h: config.def.h
 	cp config.def.h $@
 
-wayland.o: wayland.c wayland.h ext-data-control-v1.h config.h
+wayland.o: wayland.c wayland.h ext-data-control-v1.h
 wclip.o: wclip.c wayland.h ext-data-control-v1.h config.h
 
 wclip: wclip.o wayland.o ext-data-control-v1.o
 	${CC} -o $@ $^ ${LDFLAGS}
 
 clean:
-	rm -f wclip wclip.o ext-data-control-v1.* wclip-${VERSION}.tar.gz
+	rm -f wclip wclip.o wayland.o ext-data-control-v1.* wclip-${VERSION}.tar.gz
 
 dist: clean
 	mkdir -p wclip-${VERSION}

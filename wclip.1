@@ -4,12 +4,22 @@ wclip \- wayland clipboard manager
 .SH SYNOPSIS
 .B wclip
 .RB [ \-i | \-o ]
+.RB [ \-m
+.IR MIME ]
+.RB [ \-p ]
+.RB [ FILE ]
 .SH DESCRIPTION
-wclip is a clipboard manager for wayland. It writes stdin to the selection or writes the selection to stdout.
+wclip is a clipboard manager for wayland. It writes FILE to the selection or writes the selection to FILE. With no FILE, STDIN or STDOUT is used, respectively.
 .SH OPTIONS
 .TP
 .B \-i
-Writes stdin to the selection. This is the default behavior.
+Copies FILE (or STDIN if no FILE) to the selection. This is the default behavior.
 .TP
 .B \-o
-Writes the selection to stdout.
+Pastes the selection to FILE (or STDOUT if no FILE).
+.TP
+.B \-m " MIME"
+Specify a MIME to offer when copying or receive when pasting.
+.TP
+.B \-p
+Copy/paste primary selection rather than selection.
