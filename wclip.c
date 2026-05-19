@@ -11,6 +11,7 @@
 #include "config.h"
 
 typedef struct flag_s{
+	int primary;
 	int fd;
 	int (*mode)(wl_t*, struct flag_s);
 	char *mime;
@@ -57,7 +58,7 @@ copy(wl_t *wl_conn, flag_t f) {
 		goto cleanup;
 	}
 
-	if (offer_data(wl_conn, copy_buffer)) {
+	if (offer_data(wl_conn, copy_buffer, f.primary)) {
 		perror("Could not install Wayland listener");
 		goto cleanup;
 	}
@@ -82,6 +83,7 @@ cleanup:
 static int
 paste(wl_t *wl_conn, flag_t f) {
 	clipboard_t *clipboard = NULL;
+	struct ext_data_control_offer_v1 *chosen = NULL;
 
 	if (!(clipboard = malloc(sizeof(clipboard_t)))) {
 		perror("Could not allocate memory");
@@ -103,7 +105,12 @@ paste(wl_t *wl_conn, flag_t f) {
 		goto cleanup;
 	}
 
-	if (!clipboard->selection) {
+	if (f.primary)
+		chosen = clipboard->primary_selection;
+	else
+		chosen = clipboard->selection;
+
+	if (!chosen) {
 		fprintf(stderr, "Nothing is copied\n");
 		goto cleanup;
 	}
@@ -111,7 +118,7 @@ paste(wl_t *wl_conn, flag_t f) {
 	if (!f.mime)
 		f.mime = "text/plain";
 
-	ext_data_control_offer_v1_receive(clipboard->selection, f.mime, f.fd);
+	ext_data_control_offer_v1_receive(chosen, f.mime, f.fd);
 
 	if (wl_display_roundtrip(wl_conn->display) < 0) {
 		perror("Could not process paste request");
@@ -141,10 +148,10 @@ cleanup:
 int
 main(int argc, char *argv[]) {
 	int opt = 0;
-	flag_t f = {-1, &copy, NULL};
+	flag_t f = {0, -1, &copy, NULL};
 	wl_t *wl_conn = NULL;
 
-	while ((opt = getopt(argc, argv, "im:o")) != -1) {
+	while ((opt = getopt(argc, argv, "im:op")) != -1) {
 		switch (opt) {
 			case 'i':
 				f.mode = &copy;
@@ -155,8 +162,11 @@ main(int argc, char *argv[]) {
 			case 'o':
 				f.mode = &paste;
 				break;
+			case 'p':
+				f.primary = 1;
+				break;
 			default:
-				fprintf(stderr, "Usage: %s [-i|-o] [file]\n", argv[0]);
+				fprintf(stderr, "Usage: %s [-i|-o] [-m mime] [-p] [file]\n", argv[0]);
 				return EXIT_FAILURE;
 		}
 	}
@@ -164,7 +174,7 @@ main(int argc, char *argv[]) {
 	if (optind < argc) {
 		int flags = 0;
 		if (optind + 1 < argc) {
-			fprintf(stderr, "Usage: %s [-i|-o] [file]\n", argv[0]);
+			fprintf(stderr, "Usage: %s [-i|-o] [-m mime] [-p] [file]\n", argv[0]);
 			return EXIT_FAILURE;
 		}
 		if (f.mode == &copy)

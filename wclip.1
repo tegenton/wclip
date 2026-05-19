@@ -6,6 +6,7 @@ wclip \- wayland clipboard manager
 .RB [ \-i | \-o ]
 .RB [ \-m
 .IR MIME ]
+.RB [ \-p ]
 .RB [ FILE ]
 .SH DESCRIPTION
 wclip is a clipboard manager for wayland. It writes FILE to the selection or writes the selection to FILE. With no FILE, STDIN or STDOUT is used, respectively.
@@ -19,3 +20,6 @@ Pastes the selection to FILE (or STDOUT if no FILE).
 .TP
 .B \-m " MIME"
 Specify a MIME to offer when copying or receive when pasting.
+.TP
+.B \-p
+Copy/paste primary selection rather than selection.

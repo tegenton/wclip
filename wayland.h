@@ -25,5 +25,5 @@ typedef struct clipboard_s {
 int open_connection(wl_t *wl_conn);
 void close_connection(wl_t *wl_conn);
 
-int offer_data(wl_t *wl_conn, data_t *buf);
+int offer_data(wl_t *wl_conn, data_t *buf, int primary);
 int check_offers(wl_t *wl_conn, clipboard_t *clipboard);

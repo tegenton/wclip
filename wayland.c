@@ -34,7 +34,7 @@ static char* check_mime(data_t *buf);
 int open_connection(wl_t *wl_conn);
 void close_connection(wl_t *wl_conn);
 
-int offer_data(wl_t *wl_conn, data_t *buf);
+int offer_data(wl_t *wl_conn, data_t *buf, int primary);
 int check_offers(wl_t *wl_conn, clipboard_t *clipboard);
 
 static void
@@ -232,7 +232,7 @@ close_connection(wl_t *wl_conn) {
 }
 
 int
-offer_data(wl_t *wl_conn, data_t *buf) {
+offer_data(wl_t *wl_conn, data_t *buf, int primary) {
 	struct ext_data_control_source_v1 *source = NULL;
 	struct ext_data_control_source_v1_listener *listener = NULL;
 
@@ -259,7 +259,10 @@ offer_data(wl_t *wl_conn, data_t *buf) {
 
 	ext_data_control_source_v1_offer(source, buf->mime);
 
-	ext_data_control_device_v1_set_selection(wl_conn->data_control_device, source);
+	if (primary)
+		ext_data_control_device_v1_set_primary_selection(wl_conn->data_control_device, source);
+	else
+		ext_data_control_device_v1_set_selection(wl_conn->data_control_device, source);
 
 	return 0;
 
