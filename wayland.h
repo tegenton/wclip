@@ -1,5 +1,6 @@
-#include <wayland-client.h>
-#include "ext-data-control-v1.h"
+#include <stddef.h>
+
+struct ext_data_control_offer_v1;
 
 typedef struct wl_s {
 	struct wl_display *display;

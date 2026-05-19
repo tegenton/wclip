@@ -1,14 +1,21 @@
-#include <magic.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
+#include <magic.h>                    // for magic_buffer
+#include <stdlib.h>                   // for free, malloc, exit, EXIT_SUCCESS
+#include <string.h>                   // for strcmp
+#include <sys/mman.h>                 // for munmap
+#include <sys/types.h>                // for ssize_t
+#include <unistd.h>                   // for close, write
+#include <wayland-client-core.h>      // for wl_display
+#include <wayland-client-protocol.h>  // for wl_registry
+#include <wayland-util.h>             // for wl_interface
+#include "ext-data-control-v1.h"      // for ext_data_control
 
-#include <wayland-client.h>
-#include "ext-data-control-v1.h"
-
+#include "config.h"                   // for max_copy_size
 #include "wayland.h"
-#include "config.h"
+
+struct ext_data_control_device_v1;
+struct ext_data_control_offer_v1;
+struct ext_data_control_source_v1;
+struct wl_registry;
 
 static void
 on_global_add(void *data, struct wl_registry *registry, unsigned int name, const char *iface, unsigned int ver) {

@@ -1,12 +1,13 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <sys/mman.h>
-#include <unistd.h>
+#include <stdio.h>                // for perror, fprintf, NULL, stderr
+#include <stdlib.h>               // for free, malloc, exit
+#include <sys/mman.h>             // for mmap, munmap
+#include <sys/types.h>            // for ssize_t
+#include <unistd.h>               // for daemon, getopt, read
+#include <wayland-client-core.h>  // for wl_display
+#include "ext-data-control-v1.h"  // for ext_data_control_offer_v1_destroy
 
-#include "ext-data-control-v1.h"
-
-#include "wayland.h"
-#include "config.h"
+#include "wayland.h"              // for close_connection
+#include "config.h"               // for max_copy_size
 
 ssize_t
 copy_fd_to_buf(int fd, data_t *buf) {
